@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { ClientData, SortField, SortDirection } from '../types';
 import { formatCurrency, formatPercent } from '../constants';
-import { ChevronDown, ChevronUp, Search, Filter } from 'lucide-react';
+import { ChevronDown, ChevronUp, Search, Filter, User } from 'lucide-react';
 
 interface ClientTableProps {
   data: ClientData[];
@@ -89,6 +89,9 @@ const ClientTable: React.FC<ClientTableProps> = ({ data }) => {
               <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSort('cliente')}>
                 <div className="flex items-center">Cliente <SortIcon field="cliente" /></div>
               </th>
+              <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSort('vendedor')}>
+                <div className="flex items-center">Vendedor <SortIcon field="vendedor" /></div>
+              </th>
               <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => handleSort('fat_atual')}>
                 <div className="flex items-center justify-end">Fat. Atual <SortIcon field="fat_atual" /></div>
               </th>
@@ -113,6 +116,12 @@ const ClientTable: React.FC<ClientTableProps> = ({ data }) => {
                   <div className="flex flex-col">
                     <span className="font-medium text-slate-800">{client.cliente}</span>
                     <span className="text-xs text-slate-400">{client.type}</span>
+                  </div>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="flex items-center text-slate-600 text-sm">
+                    <User size={14} className="mr-1 text-slate-400" />
+                    {client.vendedor}
                   </div>
                 </td>
                 <td className="px-6 py-4 text-right font-medium text-slate-700">
@@ -147,7 +156,7 @@ const ClientTable: React.FC<ClientTableProps> = ({ data }) => {
             ))}
             {filteredData.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
                   Nenhum cliente encontrado com os filtros atuais.
                 </td>
               </tr>

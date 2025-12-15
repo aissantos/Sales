@@ -1,5 +1,6 @@
 export interface ClientData {
   id: string;
+  vendedor: string; // New field to identify the sales rep
   cliente: string;
   type: 'EPP' | 'ME' | 'LTDA' | 'SA';
   fat_atual: number;
@@ -17,7 +18,7 @@ export interface ClientData {
   fat_m6: number;
 }
 
-export type SortField = 'cliente' | 'fat_atual' | 'med_ult_3m' | 'perc' | 'gap' | 'perc_fat_aa';
+export type SortField = 'cliente' | 'fat_atual' | 'med_ult_3m' | 'perc' | 'gap' | 'perc_fat_aa' | 'vendedor';
 export type SortDirection = 'asc' | 'desc';
 
 export interface Alert {

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { MOCK_DATA } from './constants';
 import { ClientData } from './types';
@@ -16,12 +16,21 @@ import {
   FileSpreadsheet, 
   Loader2, 
   CheckCircle, 
-  XCircle 
+  XCircle,
+  Users,
+  Filter
 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [data, setData] = useState<ClientData[]>(MOCK_DATA);
-  const [dashboardKey, setDashboardKey] = useState(0); // Used to force re-render/reset of components
+  const [dashboardKey, setDashboardKey] = useState(0); 
+  const [activeVendor, setActiveVendor] = useState<string>('Todos'); // Filter state
+  
+  // Upload State
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [showVendorModal, setShowVendorModal] = useState(false);
+  const [vendorNameInput, setVendorNameInput] = useState('');
+  
   const [notification, setNotification] = useState<{
     type: 'idle' | 'loading' | 'success' | 'error';
     message: string;
@@ -29,9 +38,17 @@ const App: React.FC = () => {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
+  // Derived list of unique vendors
+  const uniqueVendors = useMemo(() => {
+    const vendors = new Set(data.map(d => d.vendedor || 'Desconhecido'));
+    return Array.from(vendors).sort();
+  }, [data]);
+
+  // Derived data based on filter
+  const displayedData = useMemo(() => {
+    if (activeVendor === 'Todos') return data;
+    return data.filter(d => d.vendedor === activeVendor);
+  }, [data, activeVendor]);
 
   const cleanKey = (k: string) => k ? k.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
 
@@ -39,23 +56,15 @@ const App: React.FC = () => {
     if (val === null || val === undefined) return 0;
     if (typeof val === 'number') return val;
     if (typeof val === 'string') {
-      // Remove 'R$', space, non-breaking space
       let clean = val.replace(/[R$\s\u00A0]/g, '');
       if (!clean) return 0;
-      
-      // Handle PT-BR format (1.234,56) vs US format (1,234.56)
-      // Heuristic: If comma appears after the last dot, or comma exists but no dot, treat as decimal separator (PT-BR)
       const lastComma = clean.lastIndexOf(',');
       const lastDot = clean.lastIndexOf('.');
-
       if (lastComma > lastDot) {
-        // Likely PT-BR: 1.000,00 or 1000,00
         clean = clean.replace(/\./g, '').replace(',', '.');
       } else {
-        // Likely US: 1,000.00 or 1000.00 or 1000
         clean = clean.replace(/,/g, '');
       }
-      
       const num = parseFloat(clean);
       return isNaN(num) ? 0 : num;
     }
@@ -69,170 +78,164 @@ const App: React.FC = () => {
     }, 4000);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  // Step 1: User picks file
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setPendingFile(file);
+    setVendorNameInput(''); // Reset input
+    setShowVendorModal(true); // Open modal to ask for vendor name
+    
+    // Reset input value so same file can be selected again
+    e.target.value = '';
+  };
 
-    // Set loading state
-    setNotification({ type: 'loading', message: 'Carregando dados...' });
+  // Step 2: User confirms vendor name and starts processing
+  const handleConfirmUpload = () => {
+    if (!pendingFile) return;
+    if (!vendorNameInput.trim()) {
+      alert("Por favor, digite o nome do vendedor.");
+      return;
+    }
+    
+    setShowVendorModal(false);
+    setNotification({ type: 'loading', message: `Processando dados para ${vendorNameInput}...` });
 
-    // Wait a brief moment to ensure UI updates before heavy processing
     setTimeout(() => {
-      // Clear existing data immediately to ensure we only work with the new file's data
-      setData([]);
-
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        const bstr = evt.target?.result;
-        if (bstr) {
-          try {
-            // Robustly access XLSX library (handle ESM vs CommonJS default exports)
-            // @ts-ignore
-            const lib = XLSX.read ? XLSX : (XLSX.default || XLSX);
-            
-            if (!lib.read) {
-               throw new Error("Erro ao carregar biblioteca XLSX");
-            }
-
-            const wb = lib.read(bstr, { type: 'array' });
-            const wsname = wb.SheetNames[0];
-            const ws = wb.Sheets[wsname];
-            
-            // Get data as array of arrays
-            const dataArr = lib.utils.sheet_to_json(ws, { header: 1 }) as any[][];
-            
-            console.log("Raw Excel Data (Arrays):", dataArr);
-
-            if (dataArr && dataArr.length > 0) {
-              // SMART HEADER DETECTION
-              // Look for a row that contains "cliente", "nome", or "empresa" to identify the header row
-              let headerRowIndex = -1;
-              
-              for (let i = 0; i < Math.min(dataArr.length, 20); i++) {
-                 const rowStr = dataArr[i].map((cell: any) => cleanKey(String(cell || '')));
-                 if (rowStr.some((c: string) => c.includes('cliente') || c.includes('nome') || c.includes('empresa') || c.includes('razaosocial') || c.includes('customer'))) {
-                    headerRowIndex = i;
-                    break;
-                 }
-              }
-
-              // Fallback: If no header found, try row 0
-              if (headerRowIndex === -1 && dataArr.length > 0) headerRowIndex = 0;
-
-              console.log("Header found at index:", headerRowIndex);
-
-              const headers = dataArr[headerRowIndex].map((h: any) => String(h));
-              const rows = dataArr.slice(headerRowIndex + 1);
-
-              // Create a map of column aliases to indices
-              const getIndex = (aliases: string[]) => {
-                 return headers.findIndex(h => {
-                   const cleanH = cleanKey(h);
-                   return aliases.some(a => cleanKey(a) === cleanH || cleanH.includes(cleanKey(a)));
-                 });
-              };
-
-              // Calculate indices once
-              const colMap = {
-                id: getIndex(['id', 'codigo', 'cod']),
-                cliente: getIndex(['cliente', 'nome', 'customer', 'empresa', 'client', 'razaosocial', 'parceiro']),
-                type: getIndex(['type', 'tipo', 'categoria', 'natureza']),
-                fat_atual: getIndex(['fat_atual', 'fatatual', 'faturamentoatual', 'faturamento', 'atual', 'fat', 'venda', 'total', 'valor']),
-                med_ult_3m: getIndex(['med_ult_3m', 'medult3m', 'mediault3m', 'media3m', 'media', 'med']),
-                perc: getIndex(['perc', 'percentual', 'performance', 'perf', '%', 'atingimento']),
-                part_med: getIndex(['part_med', 'partmed', 'share', 'participacao', 'part']),
-                gap: getIndex(['gap', 'diferenca', 'diff']),
-                fat_aa: getIndex(['fat_aa', 'fataa', 'fatanoanterior', 'anoanterior', 'aa', 'anopassado']),
-                perc_fat_aa: getIndex(['perc_fat_aa', 'percfataa', 'crescimentoaa', 'percaa', '%aa']),
-                fat_m1: getIndex(['fat_m1', 'fatm1', 'm1', 'mes1', 'm-1']),
-                fat_m2: getIndex(['fat_m2', 'fatm2', 'm2', 'mes2', 'm-2']),
-                fat_m3: getIndex(['fat_m3', 'fatm3', 'm3', 'mes3', 'm-3']),
-                fat_m4: getIndex(['fat_m4', 'fatm4', 'm4', 'mes4', 'm-4']),
-                fat_m5: getIndex(['fat_m5', 'fatm5', 'm5', 'mes5', 'm-5']),
-                fat_m6: getIndex(['fat_m6', 'fatm6', 'm6', 'mes6', 'm-6']),
-              };
-
-              console.log("Column Mapping:", colMap);
-
-              // Check if at least 'cliente' and 'fat_atual' (or similar) were found to proceed safely
-              if (colMap.cliente === -1) {
-                 showNotification('error', "Coluna 'Cliente' não encontrada. Verifique o cabeçalho.");
-                 return;
-              }
-
-              const processedData: ClientData[] = rows
-                .map((row) => {
-                   const getVal = (idx: number) => idx !== -1 ? row[idx] : undefined;
-                   
-                   // Basic data extraction
-                   const fatAtual = parseNumber(getVal(colMap.fat_atual));
-                   const med3m = parseNumber(getVal(colMap.med_ult_3m));
-                   const fatAA = parseNumber(getVal(colMap.fat_aa));
-
-                   // Auto-calculate derived metrics if missing in Excel
-                   const perc = colMap.perc !== -1 ? parseNumber(getVal(colMap.perc)) : (med3m > 0 ? (fatAtual / med3m) * 100 : 0);
-                   const gap = colMap.gap !== -1 ? parseNumber(getVal(colMap.gap)) : (fatAtual - med3m);
-                   const percFatAA = colMap.perc_fat_aa !== -1 ? parseNumber(getVal(colMap.perc_fat_aa)) : (fatAA > 0 ? (fatAtual / fatAA) * 100 : 0);
-
-                   return {
-                      id: getVal(colMap.id) || Math.random().toString(36).substr(2, 9),
-                      cliente: getVal(colMap.cliente) || '',
-                      type: (getVal(colMap.type) || 'LTDA') as any,
-                      fat_atual: fatAtual,
-                      med_ult_3m: med3m,
-                      perc: perc,
-                      part_med: parseNumber(getVal(colMap.part_med)), // If missing, user might want to calculate total share later, but keeping 0 for now
-                      gap: gap,
-                      fat_aa: fatAA,
-                      perc_fat_aa: percFatAA,
-                      fat_m1: parseNumber(getVal(colMap.fat_m1)),
-                      fat_m2: parseNumber(getVal(colMap.fat_m2)),
-                      fat_m3: parseNumber(getVal(colMap.fat_m3)),
-                      fat_m4: parseNumber(getVal(colMap.fat_m4)),
-                      fat_m5: parseNumber(getVal(colMap.fat_m5)),
-                      fat_m6: parseNumber(getVal(colMap.fat_m6)),
-                   };
-                })
-                // Filter out empty rows or rows where client name was not found
-                .filter(item => item.cliente && item.cliente.trim() !== '' && item.cliente !== 'Cliente Desconhecido');
-
-              console.log("Processed Data:", processedData);
-              
-              if (processedData.length > 0) {
-                setData(processedData);
-                setDashboardKey(prev => prev + 1);
-                showNotification('success', `Sucesso! ${processedData.length} registros importados.`);
-              } else {
-                 showNotification('error', "Nenhum dado válido encontrado. Verifique se a coluna 'Cliente' existe.");
-              }
-            } else {
-              showNotification('error', "A planilha está vazia.");
-            }
-          } catch (error) {
-            console.error("Erro ao processar arquivo:", error);
-            showNotification('error', "Erro técnico ao ler o arquivo.");
-          }
-        }
-      };
-      
-      reader.onerror = () => {
-         showNotification('error', "Erro ao ler o arquivo.");
-      };
-
-      reader.readAsArrayBuffer(file);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      processFile(pendingFile, vendorNameInput.trim());
+      setPendingFile(null);
     }, 500);
+  };
+
+  const processFile = (file: File, vendorName: string) => {
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target?.result;
+      if (bstr) {
+        try {
+          // @ts-ignore
+          const lib = XLSX.read ? XLSX : (XLSX.default || XLSX);
+          if (!lib.read) throw new Error("Erro ao carregar biblioteca XLSX");
+
+          const wb = lib.read(bstr, { type: 'array' });
+          const wsname = wb.SheetNames[0];
+          const ws = wb.Sheets[wsname];
+          const dataArr = lib.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+
+          if (dataArr && dataArr.length > 0) {
+            let headerRowIndex = -1;
+            for (let i = 0; i < Math.min(dataArr.length, 20); i++) {
+                const rowStr = dataArr[i].map((cell: any) => cleanKey(String(cell || '')));
+                if (rowStr.some((c: string) => c.includes('cliente') || c.includes('nome') || c.includes('empresa') || c.includes('razaosocial') || c.includes('customer'))) {
+                  headerRowIndex = i;
+                  break;
+                }
+            }
+            if (headerRowIndex === -1 && dataArr.length > 0) headerRowIndex = 0;
+
+            const headers = dataArr[headerRowIndex].map((h: any) => String(h));
+            const rows = dataArr.slice(headerRowIndex + 1);
+
+            const getIndex = (aliases: string[]) => {
+                return headers.findIndex(h => {
+                  const cleanH = cleanKey(h);
+                  return aliases.some(a => cleanKey(a) === cleanH || cleanH.includes(cleanKey(a)));
+                });
+            };
+
+            const colMap = {
+              id: getIndex(['id', 'codigo', 'cod']),
+              cliente: getIndex(['cliente', 'nome', 'customer', 'empresa', 'client', 'razaosocial', 'parceiro']),
+              type: getIndex(['type', 'tipo', 'categoria', 'natureza']),
+              fat_atual: getIndex(['fat_atual', 'fatatual', 'faturamentoatual', 'faturamento', 'atual', 'fat', 'venda', 'total', 'valor']),
+              med_ult_3m: getIndex(['med_ult_3m', 'medult3m', 'mediault3m', 'media3m', 'media', 'med']),
+              perc: getIndex(['perc', 'percentual', 'performance', 'perf', '%', 'atingimento']),
+              part_med: getIndex(['part_med', 'partmed', 'share', 'participacao', 'part']),
+              gap: getIndex(['gap', 'diferenca', 'diff']),
+              fat_aa: getIndex(['fat_aa', 'fataa', 'fatanoanterior', 'anoanterior', 'aa', 'anopassado']),
+              perc_fat_aa: getIndex(['perc_fat_aa', 'percfataa', 'crescimentoaa', 'percaa', '%aa']),
+              fat_m1: getIndex(['fat_m1', 'fatm1', 'm1', 'mes1', 'm-1']),
+              fat_m2: getIndex(['fat_m2', 'fatm2', 'm2', 'mes2', 'm-2']),
+              fat_m3: getIndex(['fat_m3', 'fatm3', 'm3', 'mes3', 'm-3']),
+              fat_m4: getIndex(['fat_m4', 'fatm4', 'm4', 'mes4', 'm-4']),
+              fat_m5: getIndex(['fat_m5', 'fatm5', 'm5', 'mes5', 'm-5']),
+              fat_m6: getIndex(['fat_m6', 'fatm6', 'm6', 'mes6', 'm-6']),
+            };
+
+            if (colMap.cliente === -1) {
+                showNotification('error', "Coluna 'Cliente' não encontrada. Verifique o cabeçalho.");
+                return;
+            }
+
+            const newClientData: ClientData[] = rows
+              .map((row) => {
+                  const getVal = (idx: number) => idx !== -1 ? row[idx] : undefined;
+                  const fatAtual = parseNumber(getVal(colMap.fat_atual));
+                  const med3m = parseNumber(getVal(colMap.med_ult_3m));
+                  const fatAA = parseNumber(getVal(colMap.fat_aa));
+                  const perc = colMap.perc !== -1 ? parseNumber(getVal(colMap.perc)) : (med3m > 0 ? (fatAtual / med3m) * 100 : 0);
+                  const gap = colMap.gap !== -1 ? parseNumber(getVal(colMap.gap)) : (fatAtual - med3m);
+                  const percFatAA = colMap.perc_fat_aa !== -1 ? parseNumber(getVal(colMap.perc_fat_aa)) : (fatAA > 0 ? (fatAtual / fatAA) * 100 : 0);
+
+                  return {
+                    id: getVal(colMap.id) || Math.random().toString(36).substr(2, 9),
+                    vendedor: vendorName, // Assign the user-provided vendor name
+                    cliente: getVal(colMap.cliente) || '',
+                    type: (getVal(colMap.type) || 'LTDA') as any,
+                    fat_atual: fatAtual,
+                    med_ult_3m: med3m,
+                    perc: perc,
+                    part_med: parseNumber(getVal(colMap.part_med)),
+                    gap: gap,
+                    fat_aa: fatAA,
+                    perc_fat_aa: percFatAA,
+                    fat_m1: parseNumber(getVal(colMap.fat_m1)),
+                    fat_m2: parseNumber(getVal(colMap.fat_m2)),
+                    fat_m3: parseNumber(getVal(colMap.fat_m3)),
+                    fat_m4: parseNumber(getVal(colMap.fat_m4)),
+                    fat_m5: parseNumber(getVal(colMap.fat_m5)),
+                    fat_m6: parseNumber(getVal(colMap.fat_m6)),
+                  };
+              })
+              .filter(item => item.cliente && item.cliente.trim() !== '' && item.cliente !== 'Cliente Desconhecido');
+
+            if (newClientData.length > 0) {
+              // MERGE LOGIC: Remove existing data for this vendor, append new data
+              setData(prevData => {
+                const otherVendorsData = prevData.filter(d => d.vendedor !== vendorName);
+                return [...otherVendorsData, ...newClientData];
+              });
+              
+              setDashboardKey(prev => prev + 1);
+              setActiveVendor(vendorName); // Auto-switch to the new vendor
+              showNotification('success', `Adicionado! ${newClientData.length} clientes para ${vendorName}.`);
+            } else {
+                showNotification('error', "Nenhum dado válido encontrado.");
+            }
+          } else {
+            showNotification('error', "A planilha está vazia.");
+          }
+        } catch (error) {
+          console.error(error);
+          showNotification('error', "Erro técnico ao ler o arquivo.");
+        }
+      }
+    };
+    reader.onerror = () => showNotification('error', "Erro ao ler o arquivo.");
+    reader.readAsArrayBuffer(file);
   };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-12 relative">
-      {/* Notifications / Toast */}
+      {/* Notifications */}
       {notification.type !== 'idle' && notification.type !== 'loading' && (
         <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-50 animate-fade-in-down">
           <div className={`flex items-center gap-3 px-6 py-4 rounded-lg shadow-lg border ${
-            notification.type === 'success' 
-              ? 'bg-emerald-600 text-white border-emerald-700' 
-              : 'bg-rose-600 text-white border-rose-700'
+            notification.type === 'success' ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-rose-600 text-white border-rose-700'
           }`}>
             {notification.type === 'success' ? <CheckCircle size={24} /> : <XCircle size={24} />}
             <span className="font-medium text-lg">{notification.message}</span>
@@ -250,44 +253,105 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Vendor Input Modal */}
+      {showVendorModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-scale-up">
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Identificar Vendedor</h3>
+            <p className="text-slate-500 text-sm mb-6">
+              Para organizar os dados, informe a quem pertence esta planilha de vendas.
+            </p>
+            
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-slate-700 mb-2">Nome do Vendedor</label>
+              <div className="relative">
+                <Users className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
+                <input 
+                  type="text" 
+                  autoFocus
+                  placeholder="Ex: João Silva"
+                  className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  value={vendorNameInput}
+                  onChange={(e) => setVendorNameInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleConfirmUpload()}
+                />
+              </div>
+              {uniqueVendors.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                   {uniqueVendors.map(v => (
+                     <button 
+                        key={v}
+                        onClick={() => setVendorNameInput(v)}
+                        className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded-md transition-colors"
+                     >
+                        {v}
+                     </button>
+                   ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 justify-end">
+              <button 
+                onClick={() => { setShowVendorModal(false); setPendingFile(null); }}
+                className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleConfirmUpload}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow-lg shadow-blue-600/20 transition-all"
+              >
+                Confirmar e Processar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Hidden File Input */}
-      <input 
-        type="file" 
-        accept=".xlsx, .xls, .csv" 
-        ref={fileInputRef} 
-        onChange={handleFileUpload} 
-        className="hidden" 
-      />
+      <input type="file" accept=".xlsx, .xls, .csv" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
 
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="bg-blue-600 p-2 rounded-lg text-white">
-              <LayoutDashboard size={20} />
+              <LayoutDashboard size={24} />
             </div>
             <div>
               <h1 className="text-xl font-bold text-slate-900 leading-none">Sales<span className="text-blue-600">Vision</span></h1>
-              <p className="text-xs text-slate-500">Performance Dashboard</p>
+              <p className="text-xs text-slate-500">Multi-Vendor Analytics</p>
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
+            
+            {/* Vendor Filter */}
+            <div className="hidden md:flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+               <Filter size={16} className="text-slate-400" />
+               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Visão:</span>
+               <select 
+                  className="bg-transparent text-sm font-medium text-slate-700 outline-none cursor-pointer"
+                  value={activeVendor}
+                  onChange={(e) => setActiveVendor(e.target.value)}
+               >
+                  <option value="Todos">Todas as Vendas</option>
+                  {uniqueVendors.map(v => (
+                     <option key={v} value={v}>{v}</option>
+                  ))}
+               </select>
+            </div>
+
+            <div className="h-8 w-px bg-slate-200 mx-2 hidden sm:block"></div>
+
             <button 
               onClick={handleUploadClick}
               disabled={notification.type === 'loading'}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 hover:text-blue-600 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-all shadow-md hover:shadow-lg hover:shadow-blue-600/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <UploadCloud size={16} />
-              <span className="hidden sm:inline">Upload Excel</span>
-            </button>
-            <button className="hidden sm:flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-blue-600 transition-colors">
-              <Share2 size={16} />
-              Compartilhar
-            </button>
-            <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm hover:shadow transition-all">
-              <Download size={16} />
-              Exportar
+              <UploadCloud size={18} />
+              <span className="hidden sm:inline">Adicionar Dados</span>
             </button>
           </div>
         </div>
@@ -297,48 +361,69 @@ const App: React.FC = () => {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" key={dashboardKey}>
         
         {/* Title Section */}
-        <div className="mb-8 flex justify-between items-end">
+        <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-slate-800">Visão Geral de Faturamento</h2>
-            <p className="text-slate-500 mt-1">Análise de desempenho mensal vs metas e histórico.</p>
-          </div>
-          {data === MOCK_DATA && (
-             <div className="hidden md:flex items-center gap-2 text-xs text-amber-600 bg-amber-50 px-3 py-1 rounded-full border border-amber-100">
-                <FileSpreadsheet size={14} />
-                Visualizando dados de exemplo. Faça upload para ver seus dados.
-             </div>
-          )}
-        </div>
-
-        {/* KPIs */}
-        <KPICards data={data} />
-
-        {/* Charts Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          {/* Main Charts - Takes up 2 columns */}
-          <div className="lg:col-span-2 flex flex-col gap-6">
-            <RevenueBarChart data={data} />
-            <TrendLineChart data={data} />
+            <div className="flex items-center gap-2 mb-1">
+               <h2 className="text-2xl font-bold text-slate-800">
+                  {activeVendor === 'Todos' ? 'Visão Geral (Todos)' : `Painel: ${activeVendor}`}
+               </h2>
+               {activeVendor !== 'Todos' && (
+                  <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">
+                     Vendedor
+                  </span>
+               )}
+            </div>
+            <p className="text-slate-500">
+               {displayedData.length} clientes listados nesta visualização.
+            </p>
           </div>
           
-          {/* Sidebar Charts - Takes up 1 column */}
-          <div className="flex flex-col gap-6">
-            <MatrixScatterChart data={data} />
-            <AlertPanel data={data} />
+          {/* Mobile Filter */}
+          <div className="md:hidden w-full">
+             <label className="text-xs font-semibold text-slate-500 uppercase mb-1 block">Filtrar Vendedor</label>
+             <select 
+                  className="w-full bg-white border border-slate-300 text-slate-700 text-sm rounded-lg p-2.5"
+                  value={activeVendor}
+                  onChange={(e) => setActiveVendor(e.target.value)}
+               >
+                  <option value="Todos">Todas as Vendas</option>
+                  {uniqueVendors.map(v => (
+                     <option key={v} value={v}>{v}</option>
+                  ))}
+               </select>
           </div>
         </div>
 
-        {/* Detail Table */}
-        <ClientTable data={data} />
+        {displayedData.length === 0 ? (
+           <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
+              <FileSpreadsheet size={48} className="text-slate-300 mb-4" />
+              <h3 className="text-lg font-medium text-slate-600">Nenhum dado encontrado para esta visão</h3>
+              <p className="text-slate-400 text-sm mt-1">Faça upload de uma planilha ou mude o filtro.</p>
+           </div>
+        ) : (
+          <>
+            {/* KPIs */}
+            <KPICards data={displayedData} />
+
+            {/* Charts Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+              <div className="lg:col-span-2 flex flex-col gap-6">
+                <RevenueBarChart data={displayedData} />
+                <TrendLineChart data={displayedData} />
+              </div>
+              
+              <div className="flex flex-col gap-6">
+                <MatrixScatterChart data={displayedData} />
+                <AlertPanel data={displayedData} />
+              </div>
+            </div>
+
+            {/* Detail Table */}
+            <ClientTable data={displayedData} />
+          </>
+        )}
         
       </main>
-
-      {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 mt-12 py-8">
-        <div className="max-w-7xl mx-auto px-4 text-center text-slate-400 text-sm">
-          <p>&copy; 2024 SalesVision Analytics. Todos os direitos reservados.</p>
-        </div>
-      </footer>
     </div>
   );
 };

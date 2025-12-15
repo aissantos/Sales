@@ -3,6 +3,7 @@ import { ClientData } from './types';
 export const MOCK_DATA: ClientData[] = [
   {
     id: "1",
+    vendedor: "Time Exemplo",
     cliente: "Supermercado Sao Braz Ltda",
     type: "LTDA",
     fat_atual: 36428,
@@ -21,6 +22,7 @@ export const MOCK_DATA: ClientData[] = [
   },
   {
     id: "2",
+    vendedor: "Time Exemplo",
     cliente: "Comercial Santos EPP",
     type: "EPP",
     fat_atual: 125000,
@@ -39,6 +41,7 @@ export const MOCK_DATA: ClientData[] = [
   },
   {
     id: "3",
+    vendedor: "Time Exemplo",
     cliente: "Mercadinho da Vila ME",
     type: "ME",
     fat_atual: 15400,
@@ -57,6 +60,7 @@ export const MOCK_DATA: ClientData[] = [
   },
   {
     id: "4",
+    vendedor: "Time Exemplo",
     cliente: "Hiper Atacado do Norte SA",
     type: "SA",
     fat_atual: 450000,
@@ -75,6 +79,7 @@ export const MOCK_DATA: ClientData[] = [
   },
   {
     id: "5",
+    vendedor: "Time Exemplo",
     cliente: "Padaria Pão Quente",
     type: "ME",
     fat_atual: 8200,
@@ -93,6 +98,7 @@ export const MOCK_DATA: ClientData[] = [
   },
   {
     id: "6",
+    vendedor: "Time Exemplo",
     cliente: "Farmácia Saúde Total",
     type: "LTDA",
     fat_atual: 62000,
@@ -111,6 +117,7 @@ export const MOCK_DATA: ClientData[] = [
   },
   {
     id: "7",
+    vendedor: "Time Exemplo",
     cliente: "Restaurante Sabor Mineiro",
     type: "EPP",
     fat_atual: 28000,
@@ -129,6 +136,7 @@ export const MOCK_DATA: ClientData[] = [
   },
   {
     id: "8",
+    vendedor: "Time Exemplo",
     cliente: "Auto Peças Veloz",
     type: "LTDA",
     fat_atual: 95000,
@@ -147,6 +155,7 @@ export const MOCK_DATA: ClientData[] = [
   },
   {
     id: "9",
+    vendedor: "Time Exemplo",
     cliente: "Livraria Leitura",
     type: "ME",
     fat_atual: 12000,
@@ -165,6 +174,7 @@ export const MOCK_DATA: ClientData[] = [
   },
   {
     id: "10",
+    vendedor: "Time Exemplo",
     cliente: "Tech Solutions SA",
     type: "SA",
     fat_atual: 210000,
