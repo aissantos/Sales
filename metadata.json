@@ -1,0 +1,5 @@
+{
+  "name": "Customer Performance Dashboard",
+  "description": "A comprehensive, interactive dashboard for analyzing customer billing performance, featuring KPIs, dynamic charts, prioritization matrices, and automated alerts.",
+  "requestFramePermissions": []
+}
